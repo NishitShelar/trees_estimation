@@ -1,12 +1,12 @@
 import os
 import cv2
 import numpy as np
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
-UPLOAD_FOLDER = "static/uploads"
+UPLOAD_FOLDER = "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
@@ -24,7 +24,6 @@ def calculate_green_area(image_path):
     image = resize_image(image, 1920, 1080)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # Range for yellowish-green to dark-green
     lower_bound = np.array([25, 40, 40])
     upper_bound = np.array([100, 255, 255])
 
@@ -48,37 +47,9 @@ def get_suggestions(tree_count):
     else:
         return "High tree density. Prioritize conservation efforts."
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        file = request.files.get("file")
-        area = request.form.get("area")
-
-        if file and allowed_file(file.filename) and area:
-            filename = secure_filename(file.filename)
-            file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-            file.save(file_path)
-
-            green_percentage, mask = calculate_green_area(file_path)
-            tree_count = estimate_trees(green_percentage, float(area))
-            suggestion = get_suggestions(tree_count)
-
-            mask_path = os.path.join(app.config["UPLOAD_FOLDER"], f"mask_{filename}")
-            cv2.imwrite(mask_path, mask)
-
-            return render_template("index.html", 
-                                   image_url=url_for('static', filename=f"uploads/{filename}"),
-                                   mask_url=url_for('static', filename=f"uploads/mask_{filename}"),
-                                   green_percentage=green_percentage,
-                                   tree_count=int(tree_count),
-                                   suggestion=suggestion)
-
-    return render_template("index.html")
-
-if __name__ == "__main__":
-    app.run(debug=True)
-
-#############################################################################################
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"message": "Tree Estimation API is running"}), 200
 
 @app.route("/api/calculate", methods=["POST"])
 def calculate():
@@ -94,15 +65,17 @@ def calculate():
         tree_count = estimate_trees(green_percentage, float(area))
         suggestion = get_suggestions(tree_count)
 
+        # Optional: Save mask if needed
         mask_path = os.path.join(app.config["UPLOAD_FOLDER"], f"mask_{filename}")
         cv2.imwrite(mask_path, mask)
 
-        return {
-            "image_url": url_for('static', filename=f"uploads/{filename}"),
-            "mask_url": url_for('static', filename=f"uploads/mask_{filename}"),
+        return jsonify({
             "green_percentage": green_percentage,
             "tree_count": int(tree_count),
             "suggestion": suggestion
-        }
+        })
 
-    return {"error": "Invalid input"}, 
+    return jsonify({"error": "Invalid input. Please upload an image and provide area."}), 400
+
+if __name__ == "__main__":
+    app.run(debug=True)
