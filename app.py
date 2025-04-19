@@ -3,8 +3,10 @@ import cv2
 import numpy as np
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
+from flask_cors import CORS  # NEW
 
 app = Flask(__name__)
+CORS(app)  # Allow all origins by default
 
 UPLOAD_FOLDER = "uploads"
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
@@ -65,7 +67,7 @@ def calculate():
         tree_count = estimate_trees(green_percentage, float(area))
         suggestion = get_suggestions(tree_count)
 
-        # Optional: Save mask if needed
+        # Optional: Save mask image
         mask_path = os.path.join(app.config["UPLOAD_FOLDER"], f"mask_{filename}")
         cv2.imwrite(mask_path, mask)
 
@@ -78,4 +80,5 @@ def calculate():
     return jsonify({"error": "Invalid input. Please upload an image and provide area."}), 400
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # For Render
+    app.run(host="0.0.0.0", port=port)
