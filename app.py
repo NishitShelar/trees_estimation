@@ -1,86 +1,88 @@
-import os
-import cv2
-import numpy as np
+# main.py
+
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
-from flask_cors import CORS
+import os
+from PIL import Image
+import numpy as np
 
 app = Flask(__name__)
-CORS(app)
-
 UPLOAD_FOLDER = "uploads"
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+# ================================
+# Estimate % Green from Image
+# ================================
+def calculate_green_percentage(image_path):
+    image = Image.open(image_path).convert("RGB")
+    np_image = np.array(image)
 
-def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    # Define green range [R, G, B]
+    lower = np.array([30, 80, 30])    # min green
+    upper = np.array([120, 255, 120]) # max green
 
-def resize_image(image, width, height):
-    return cv2.resize(image, (width, height))
+    # Create green mask
+    green_mask = ((np_image >= lower) & (np_image <= upper)).all(axis=2)
 
-def calculate_green_area(image_path):
-    image = cv2.imread(image_path)
-    image = resize_image(image, 1920, 1080)
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    green_pixels = np.count_nonzero(green_mask)
+    total_pixels = np_image.shape[0] * np_image.shape[1]
 
-    lower_bound = np.array([25, 40, 40])
-    upper_bound = np.array([100, 255, 255])
+    green_percentage = (green_pixels / total_pixels) * 100
+    return round(green_percentage, 2)
 
-    mask = cv2.inRange(hsv, lower_bound, upper_bound)
-    green_area = cv2.countNonZero(mask)
-    total_area = image.shape[0] * image.shape[1]
-    green_percentage = (green_area / total_area) * 100
+# ================================
+# Estimate Tree Count
+# ================================
+def estimate_tree_count(area_km2: float, green_percentage: float) -> int:
+    if area_km2 <= 0 or green_percentage <= 0:
+        return 0
 
-    return green_percentage, mask
+    green_coverage = green_percentage / 100
 
-def estimate_trees(green_percentage, region_area_km2):
-    trees_per_sq_km = 288673
-    ratio = 21.7 / 100
-    return green_percentage * ratio * trees_per_sq_km * region_area_km2
+    TREE_DENSITY_LOW = 500     # roads
+    TREE_DENSITY_MEDIUM = 2000 # colonies
+    TREE_DENSITY_HIGH = 5000   # parks
 
-def get_suggestions_by_green_coverage(percentage):
-    if percentage < 10:
-        return "Critical: Very low green cover. Urgent afforestation needed."
-    elif percentage < 20:
-        return "Low: Area can benefit from increased greenery and urban forestry."
-    elif percentage < 40:
-        return "Healthy: Maintain and enhance current green cover."
+    if green_coverage > 0.35:
+        density = TREE_DENSITY_HIGH
+    elif green_coverage > 0.15:
+        density = TREE_DENSITY_MEDIUM
     else:
-        return "Excellent: Forest-like coverage. Prioritize conservation."
+        density = TREE_DENSITY_LOW
 
-@app.route("/", methods=["GET"])
-def root():
-    return jsonify({"message": "Tree Estimation API is running"}), 200
+    estimated_trees = area_km2 * green_coverage * density
+    return round(estimated_trees)
 
+# ================================
+# API Endpoint
+# ================================
 @app.route("/api/calculate", methods=["POST"])
 def calculate():
-    file = request.files.get("file")
-    area = request.form.get("area")
+    if "file" not in request.files or "area" not in request.form:
+        return jsonify({"error": "Missing image or area"}), 400
 
-    if file and allowed_file(file.filename) and area:
-        filename = secure_filename(file.filename)
-        file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        file.save(file_path)
+    file = request.files["file"]
+    area_km2 = float(request.form["area"])
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(filepath)
 
-        green_percentage, mask = calculate_green_area(file_path)
-        tree_count = estimate_trees(green_percentage, float(area))
-        suggestion = get_suggestions_by_green_coverage(green_percentage)
+    # Step 1: Get green % from image
+    green_percentage = calculate_green_percentage(filepath)
 
-        # Optional: Save mask
-        mask_path = os.path.join(app.config["UPLOAD_FOLDER"], f"mask_{filename}")
-        cv2.imwrite(mask_path, mask)
+    # Step 2: Estimate tree count
+    estimated_trees = estimate_tree_count(area_km2, green_percentage)
 
-        return jsonify({
-            "green_percentage": round(green_percentage, 2),
-            "tree_count": int(tree_count),
-            "suggestion": suggestion
-        })
+    return jsonify({
+        "green_percentage": green_percentage,
+        "tree_count": estimated_trees,
+        "suggestion": "Consider planting more trees along non-green areas.",
+        "areaSize": area_km2
+    })
 
-    return jsonify({"error": "Invalid input. Please upload an image and provide area."}), 400
 
+# ================================
+# Run the Flask server
+# ================================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(debug=True)
