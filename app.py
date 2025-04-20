@@ -1,27 +1,28 @@
 # main.py
 
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import os
 from PIL import Image
 import numpy as np
 
 app = Flask(__name__)
+CORS(app)  # 🔥 Enable CORS
+
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ================================
-# Estimate % Green from Image
-# ================================
+# ===========================
+# Calculate % Green in Image
+# ===========================
 def calculate_green_percentage(image_path):
     image = Image.open(image_path).convert("RGB")
     np_image = np.array(image)
 
-    # Define green range [R, G, B]
-    lower = np.array([30, 80, 30])    # min green
-    upper = np.array([120, 255, 120]) # max green
+    lower = np.array([30, 80, 30])
+    upper = np.array([120, 255, 120])
 
-    # Create green mask
     green_mask = ((np_image >= lower) & (np_image <= upper)).all(axis=2)
 
     green_pixels = np.count_nonzero(green_mask)
@@ -30,18 +31,18 @@ def calculate_green_percentage(image_path):
     green_percentage = (green_pixels / total_pixels) * 100
     return round(green_percentage, 2)
 
-# ================================
+# ===========================
 # Estimate Tree Count
-# ================================
+# ===========================
 def estimate_tree_count(area_km2: float, green_percentage: float) -> int:
     if area_km2 <= 0 or green_percentage <= 0:
         return 0
 
     green_coverage = green_percentage / 100
 
-    TREE_DENSITY_LOW = 500     # roads
-    TREE_DENSITY_MEDIUM = 2000 # colonies
-    TREE_DENSITY_HIGH = 5000   # parks
+    TREE_DENSITY_LOW = 500
+    TREE_DENSITY_MEDIUM = 2000
+    TREE_DENSITY_HIGH = 5000
 
     if green_coverage > 0.35:
         density = TREE_DENSITY_HIGH
@@ -53,9 +54,9 @@ def estimate_tree_count(area_km2: float, green_percentage: float) -> int:
     estimated_trees = area_km2 * green_coverage * density
     return round(estimated_trees)
 
-# ================================
+# ===========================
 # API Endpoint
-# ================================
+# ===========================
 @app.route("/api/calculate", methods=["POST"])
 def calculate():
     if "file" not in request.files or "area" not in request.form:
@@ -67,10 +68,7 @@ def calculate():
     filepath = os.path.join(UPLOAD_FOLDER, filename)
     file.save(filepath)
 
-    # Step 1: Get green % from image
     green_percentage = calculate_green_percentage(filepath)
-
-    # Step 2: Estimate tree count
     estimated_trees = estimate_tree_count(area_km2, green_percentage)
 
     return jsonify({
@@ -80,9 +78,8 @@ def calculate():
         "areaSize": area_km2
     })
 
-
-# ================================
-# Run the Flask server
-# ================================
+# ===========================
+# Run Server
+# ===========================
 if __name__ == "__main__":
     app.run(debug=True)
